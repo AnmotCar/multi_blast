@@ -34,7 +34,7 @@ This pipeline automates:
 
 Directory structure example:
 
-<pre> ```text
+<pre> ```
 ~/path/you/have/ 
 |    ├── genomes/ 
 |    ├── genome1.faa 
