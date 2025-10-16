@@ -32,18 +32,23 @@ This pipeline automates:
 	- all_locus_tags.txt -> list of all locus tags in the analysis
 	- gene_coordinates.csv -> file containing hits with "Locus_Tag/Protein_ID/Start/End/Strand/Gene/Product/Organism/Source_File"
 
-#~/path/you/have/
-#├── genomes/
-#|   ├── genome1.faa
-#|   ├── genome1.gbk
-#|   ├── genome2.faa
-#|   ├── genome1.gbk
-#|   └── output_runname/
-#|        ├── database
-#|        ├── results
-#|        └── run.log
-#└── input/
-#     └── gene1-3.fasta
+# ------------------------------------------------------------
+# Directory structure example:
+#
+# ~/path/you/have/
+# ├── genomes/
+# │   ├── genome1.faa
+# │   ├── genome1.gbk
+# │   ├── genome2.faa
+# │   ├── genome2.gbk
+# │   └── output_runname/
+# │        ├── database/
+# │        ├── results/
+# │        └── run.log
+# └── input/
+#      └── gene1-3.fasta
+#
+# ------------------------------------------------------------
    
 ## Usage ##
 
