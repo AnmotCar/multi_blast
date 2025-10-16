@@ -9,7 +9,7 @@ This pipeline automates:
 - BLAST of multiple query `.fasta` sequences
 - Extraction of surrounding genes (customizable)
 - Retrieval of locus tags and contextual regions
-- Optional Python post-processing
+- Creation of table with data summury as a `.csv`
 
 
 ## Requirements ##
