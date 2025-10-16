@@ -1,4 +1,4 @@
-# BLAST Multi-Synteny Pipeline
+# Multi-BLAST Pipeline with Gene Neighbourhood
 
 A Bash-based workflow for running multi-genome BLAST comparisons and extracting regions around query genes.
 
