@@ -60,6 +60,13 @@ bash /path/to/script/multi_blast_complete.sh
 
 Usage: /path/to/script/multi_blast_complete.sh [STEP] [DRY_RUN] [--blast-only]
 
+When script is run prompts will be
+- Path to .faa genomes directory:
+- Path to query .fasta files:
+- Run name (blank = timestamp):
+- How many surrounding genes? (Will take # up and downstream):
+
+
 This script performs BLAST searches and retrieves surrounding genes.
 
 Arguments:
