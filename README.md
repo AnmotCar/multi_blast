@@ -33,7 +33,8 @@ This pipeline automates:
 	- gene_coordinates.csv -> file containing hits with "Locus_Tag/Protein_ID/Start/End/Strand/Gene/Product/Organism/Source_File"
 
 Directory structure example:
-"
+
+<pre> ```text
 ~/path/you/have/ 
 |    ├── genomes/ 
 |    ├── genome1.faa 
@@ -46,7 +47,7 @@ Directory structure example:
 |           └── run.log 
 └── input/ 
  └── gene1-3.fasta
-"
+``` </pre>
    
 ## Usage ##
 
