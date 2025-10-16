@@ -36,12 +36,12 @@ Directory structure example:
 
 <pre> ```
 ~/path/you/have/ 
-|    ├── genomes/ 
-|    ├── genome1.faa 
-|    ├── genome1.gbk 
-|    ├── genome2.faa 
-|    ├── genome1.gbk 
-|    └── output_runname/ 
+|    └── genomes/ 
+|         ├── genome1.faa 
+|         ├── genome1.gbk 
+|         ├── genome2.faa 
+|         ├── genome1.gbk 
+|         └── output_runname/ 
 |           ├── database 
 |           ├── results 
 |           └── run.log 
