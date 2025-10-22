@@ -153,18 +153,22 @@ make_databases() {
 }
 
 run_blast() {
-    echo "STEP 2: Running BLAST queries..."
+    echo "STEP 2: Running BLAST queries (multi-copy aware)..."
     for query_file in "$input_query"/*.fasta; do
         query_base=$(basename "${query_file%.*}")
         while read -r db_path; do
             db_name=$(basename "$db_path")
             out_file="$RESULTS_DIR/${db_name}_vs_${query_base}.txt"
+
             if [[ -f "$out_file" ]]; then
                 echo "BLAST $query_base vs $db_name exists, skipping."
                 log_status "$query_base" "$db_name" "blast" "skipped"
             else
-                blastp -query "$query_file" -db "$db_path" -out "$out_file" -outfmt '6 sseqid evalue' \
-                    -culling_limit 1 -max_target_seqs 1 -max_hsps 1 -num_threads 4 -evalue 1e-10
+                # Remove -max_target_seqs 1 and -culling_limit 1 to keep all hits
+                blastp -query "$query_file" -db "$db_path" \
+                       -out "$out_file" -outfmt '6 sseqid evalue' \
+                       -max_hsps 1 -num_threads 4 -evalue 1e-10
+
                 echo "BLAST $query_base vs $db_name done."
                 log_status "$query_base" "$db_name" "blast" "done"
             fi
@@ -193,44 +197,87 @@ extract_sequences() {
     done
 }
 retrieve_context_genes() {
-        echo "STEP 4: Retrieving context genes... (testing)"
-        for blast_result in "$RESULTS_DIR"/*.fasta; do
-        [[ "$blast_result" == *_cluster.fasta ]] && continue  # skip already processed outputs
-            base_name=$(basename "${blast_result%.*}")
-            for genome_file in "$input_dir"/*.faa; do
-                genome_base=$(basename "${genome_file%.*}")
-                if [[ "$base_name" == ${genome_base}_db* ]]; then
-                    annotation_output="$RESULTS_DIR/${base_name}_cluster.faa"
-                    grep "^>" "$blast_result" | cut -d' ' -f1 | tr -d '>' | while read -r locus_tag; do
-                        # Find line numbers for headers in the genome file
-                        awk -v target="$locus_tag" -v range="$context" '
-                        BEGIN {header_count=0}
-                        /^>/ {header_count++; headers[header_count]=NR; tags[header_count]=substr($1,2)}
-                        {lines[NR]=$0}
+    echo "STEP 4: Retrieving context genes (multi-copy aware)..."
+
+    # associative array to track how many times each locus tag has been processed
+    declare -A tag_counts
+
+    # loop over all extracted BLAST sequence files
+    for blast_result in "$RESULTS_DIR"/*.fasta; do
+        [[ "$blast_result" == *_cluster.faa ]] && continue  # skip already processed files
+
+        base_name=$(basename "${blast_result%.*}")
+
+        # loop over all genome files
+        for genome_file in "$input_dir"/*.faa; do
+            genome_base=$(basename "${genome_file%.*}")
+
+            # only process if the BLAST result matches this genome
+            if [[ "$base_name" == ${genome_base}_db* ]]; then
+                echo "Processing BLAST result: $blast_result  against genome: $genome_file"
+
+                # read all locus tags from the BLAST result into a bash array
+                mapfile -t locus_tags < <(grep "^>" "$blast_result" | cut -d' ' -f1 | tr -d '>')
+
+                # process each locus tag
+                for locus_tag in "${locus_tags[@]}"; do
+                    # initialize or increment count safely
+                    if [[ -z "${tag_counts[$locus_tag]+_}" ]]; then
+                        tag_counts[$locus_tag]=1
+                    else
+                        tag_counts[$locus_tag]=$(( tag_counts[$locus_tag] + 1 ))
+                    fi
+                    copy_num=${tag_counts[$locus_tag]}
+
+                    # create a unique output filename for multiple copies
+                    if (( copy_num > 1 )); then
+                        annotation_output="$RESULTS_DIR/${base_name}_${locus_tag}_copy${copy_num}_cluster.faa"
+                    else
+                        annotation_output="$RESULTS_DIR/${base_name}_${locus_tag}_cluster.faa"
+                    fi
+
+                    # extract surrounding genes using awk
+                    awk -v target="$locus_tag" -v range="$context" '
+                        /^>/ { headers[++h]=NR; tags[h]=substr($1,2) }
+                        { lines[NR]=$0 }
                         END {
-                            for (i=1; i<=header_count; i++) {
+                            for (i=1; i<=h; i++) {
                                 if (tags[i]==target) {
-                                    start=(i-range>1)?headers[i-range]:1;
-                                    end=(i+range<header_count)?headers[i+range]:headers[header_count+1];
-                                    for (j=start; j<end; j++) print lines[j] > "/dev/stdout";
+                                    start=(i-range>1)?headers[i-range]:1
+                                    end=(i+range<=h)?headers[i+range]:NR+1
+                                    for (j=start; j<end; j++) print lines[j]
                                 }
                             }
                         }
-                        ' "$genome_file" >> "$annotation_output"
-                    done
-                    echo "Annotations written to $annotation_output"
-                fi
-            done
+                    ' "$genome_file" >> "$annotation_output"
+
+                    echo "Context for $locus_tag (copy $copy_num) written to $annotation_output"
+                done
+            fi
         done
+    done
 }
+
+
 collect_locus_tags() {
-    echo "STEP 5: Collecting locus tags... (testing)"
+    echo "STEP 5: Collecting locus tags (including multi-copy clusters)..."
     tag_output="$RESULTS_DIR/all_locus_tags.txt"
     > "$tag_output"
+
+    total_tags=0
+    cluster_count=0
+
+    # Loop over all _cluster.faa files, including *_copyN_cluster.faa
     for tag_file in "$RESULTS_DIR"/*_cluster.faa; do
+        [[ ! -s "$tag_file" ]] && continue  # skip empty files
+        cluster_count=$((cluster_count + 1))
+        tag_count=$(grep -c "^>" "$tag_file" || true)
+        total_tags=$((total_tags + tag_count))
         grep "^>" "$tag_file" | cut -d' ' -f1 | tr -d '>' >> "$tag_output"
     done
-    echo "Locus tags extracted to $tag_output."
+
+    echo "✅ Processed $cluster_count cluster files, collected $total_tags locus tags total."
+    echo "Locus tags written to: $tag_output"
 }
 run_python() {
     echo "STEP 6: Running Python script for gene coordinates..."
