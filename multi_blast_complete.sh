@@ -1,16 +1,14 @@
 #!/bin/bash
-   # blast_multi_syntany_improved.sh
-   # Description: Master pipeline for multi-genome BLAST synteny analysis
+   # multi_blast_complete.sh
+   # Description: Master pipeline for multi-genome BLAST gene neighbourhood analysis
    # Author: Anna Motnenko.
-   # Version: 1.0
+   # Version: 1.1
    # Dependencies: BLAST+, Python 3, GNU utils
 
 # --- HELP MESSAGE ---
 show_help() {
     cat << EOF
-Usage: $0 [STEP] [DRY_RUN] [--blast-only]
-
-This script performs BLAST searches and retrieves surrounding genes.
+This script performs BLAST searches and retrieves surrounding genes. The default is a protein BLAST (BLASTP) search.
 
 Arguments:
   STEP        Optional. Step to start from. Default is 'all'.
@@ -18,7 +16,10 @@ Arguments:
                            retrieve_context_genes, collect_locus_tags, run_python
               You can also use 'all' to run the entire pipeline.
   DRY_RUN     Optional. 'true' to perform a dry run (commands are printed but not executed).
+  
   --blast-only Optional flag to run only up to BLAST and sequence extraction.
+  
+  --blastn     Use BLASTN instead of BLASTP (for nucleotide data).
 
 Examples:
   Run the full pipeline:
@@ -39,11 +40,11 @@ EOF
 ############################################
 # PARSE FLAGS
 ############################################
-STEP="all"    # default step
+STEP="all"
 DRY_RUN=false
 BLAST_ONLY=false
+BLAST_MODE="blastp"   # default mode
 
-# Temporary array for remaining positional args
 ARGS=()
 
 for arg in "$@"; do
@@ -54,6 +55,9 @@ for arg in "$@"; do
             ;;
         --blast-only)
             BLAST_ONLY=true
+            ;;
+        --blastn)
+            BLAST_MODE="blastn"
             ;;
         true|false)
             DRY_RUN="$arg"
@@ -100,7 +104,7 @@ check_tools() {
 }
 
 get_inputs() {
-    echo "Path to .faa genomes directory:"
+    echo "Path to genomes directory (.faa or .ffn):"
     read input_dir
     echo "Path to query .fasta files:"
     read input_query
@@ -115,8 +119,19 @@ get_inputs() {
 }
 
 validate_inputs() {
-    [[ -d "$input_dir" && "$(ls -A "$input_dir"/*.faa 2>/dev/null)" ]] || { echo "Error: input_dir invalid"; exit 1; }
-    [[ -d "$input_query" && "$(ls -A "$input_query"/*.fasta 2>/dev/null)" ]] || { echo "Error: input_query invalid"; exit 1; }
+    # Choose file extensions based on BLAST mode
+    local genome_ext="faa"
+    [[ "$BLAST_MODE" == "blastn" ]] && genome_ext="ffn"
+
+    [[ -d "$input_dir" && "$(ls -A "$input_dir"/*.$genome_ext 2>/dev/null)" ]] || {
+        echo "Error: input_dir invalid or missing .$genome_ext files"
+        exit 1
+    }
+
+    [[ -d "$input_query" && "$(ls -A "$input_query"/*.fasta 2>/dev/null)" ]] || {
+        echo "Error: input_query invalid or missing .fasta files"
+        exit 1
+    }
 }
 
 setup_output() {
@@ -135,15 +150,25 @@ make_databases() {
     echo "STEP 1: Building BLAST databases..."
     database_list="$DB_DIR/database_list.txt"
     > "$database_list"
-    for f in "$input_dir"/*.faa; do
+
+    # Pick extension and dbtype based on BLAST mode
+    if [[ "$BLAST_MODE" == "blastn" ]]; then
+        ext="ffn"
+        dbtype="nucl"
+    else
+        ext="faa"
+        dbtype="prot"
+    fi
+
+    for f in "$input_dir"/*."$ext"; do
         filename=$(basename "${f%.*}")
         db_path="$DB_DIR/${filename}_db/${filename}_db"
-        if [[ -f "$db_path.psq" ]]; then
+        if [[ -f "$db_path.${dbtype:0:1}sq" ]]; then
             echo "Database $filename exists, skipping."
             log_status "ALL" "$filename" "db" "skipped"
         else
             mkdir -p "$(dirname "$db_path")"
-            makeblastdb -in "$f" -dbtype prot -out "$db_path" -parse_seqids
+            makeblastdb -in "$f" -dbtype "$dbtype" -out "$db_path" -parse_seqids
             echo "Database $filename created."
             log_status "ALL" "$filename" "db" "done"
         fi
@@ -164,12 +189,11 @@ run_blast() {
                 echo "BLAST $query_base vs $db_name exists, skipping."
                 log_status "$query_base" "$db_name" "blast" "skipped"
             else
-                # Remove -max_target_seqs 1 and -culling_limit 1 to keep all hits
-                blastp -query "$query_file" -db "$db_path" \
-                       -out "$out_file" -outfmt '6 sseqid evalue' \
-                       -max_hsps 1 -num_threads 4 -evalue 1e-10
+                $BLAST_MODE -query "$query_file" -db "$db_path" \
+                            -out "$out_file" -outfmt '6 sseqid evalue' \
+                            -max_target_seqs 1 -max_hsps 1 -num_threads 4 -evalue 1e-10
 
-                echo "BLAST $query_base vs $db_name done."
+                echo "$BLAST_MODE $query_base vs $db_name done."
                 log_status "$query_base" "$db_name" "blast" "done"
             fi
         done < "$database_list"
@@ -178,6 +202,9 @@ run_blast() {
 
 extract_sequences() {
     echo "STEP 3: Extracting sequences..."
+    dbtype="prot"
+    [[ "$BLAST_MODE" == "blastn" ]] && dbtype="nucl"
+
     for f in "$RESULTS_DIR"/*.txt; do
         filename=$(basename "${f%.*}")
         fasta_out="$RESULTS_DIR/${filename}.fasta"
@@ -189,13 +216,14 @@ extract_sequences() {
         while read -r db_path; do
             db_name=$(basename "$db_path")
             if [[ "$filename" == "$db_name"* ]]; then
-                blastdbcmd -db "$db_path" -entry_batch "$f" -out "$fasta_out" -dbtype prot
+                blastdbcmd -db "$db_path" -entry_batch "$f" -out "$fasta_out" -dbtype "$dbtype"
                 echo "Extracted sequences $filename"
                 log_status "$filename" "$db_name" "extract" "done"
             fi
         done < "$database_list"
     done
 }
+
 retrieve_context_genes() {
     echo "STEP 4: Retrieving context genes (multi-copy aware)..."
 
@@ -276,25 +304,65 @@ collect_locus_tags() {
         grep "^>" "$tag_file" | cut -d' ' -f1 | tr -d '>' >> "$tag_output"
     done
 
-    echo "✅ Processed $cluster_count cluster files, collected $total_tags locus tags total."
+    echo "Processed $cluster_count cluster files, collected $total_tags locus tags total."
     echo "Locus tags written to: $tag_output"
 }
 run_python() {
     echo "STEP 6: Running Python script for gene coordinates..."
     tag_output="$RESULTS_DIR/all_locus_tags.txt"
-    python3 "$SCRIPT_DIR/gene_coordinates.py" "$tag_output" "$input_dir" "$RESULTS_DIR"
+    python3 "$SCRIPT_DIR/improved_get_coordinates.py" "$tag_output" "$input_dir" "$RESULTS_DIR"
     echo "Python script completed."
 }
 
 print_summary() {
     echo
-    echo "######## PIPELINE SUMMARY ########"
-    printf "%-25s %-25s %-10s %-10s\n" "QUERY" "DB" "STEP" "STATUS"
+    echo "########### PIPELINE SUMMARY ###########"
+
+    # --- ANSI color codes ---
+    GREEN="\033[0;32m"
+    YELLOW="\033[0;33m"
+    RED="\033[0;31m"
+    CYAN="\033[0;36m"
+    BOLD="\033[1m"
+    NC="\033[0m"  # No Color
+
+    # --- Table header ---
+    printf "${BOLD}%-25s %-25s %-10s %-10s${NC}\n" "QUERY" "DB" "STEP" "STATUS"
+
+    # --- Print each status line with colors ---
     for key in "${!summary[@]}"; do
         IFS="|" read -r q db s <<< "$key"
-        printf "%-25s %-25s %-10s %-10s\n" "$q" "$db" "$s" "${summary[$key]}"
+        status="${summary[$key]}"
+
+        case "$status" in
+            done)     color=$GREEN ;;
+            skipped)  color=$YELLOW ;;
+            failed)   color=$RED ;;
+            *)        color=$CYAN ;;
+        esac
+
+        q_short=$(basename "$q")
+        db_short=$(basename "$db")
+        printf "%-25.25s %-25.25s %-10s ${color}%-10s${NC}\n" "$q_short" "$db_short" "$s" "$status"
+
     done
-    echo "##################################"
+
+    echo "----------------------------------------"
+
+    # --- Compute summary stats ---
+    local total_genomes total_queries total_clusters total_runtime
+    total_genomes=$(find "$input_dir" -maxdepth 1 -name "*.faa" | wc -l)
+    total_queries=$(find "$input_query" -maxdepth 1 -name "*.fasta" | wc -l)
+    total_clusters=$(find "$RESULTS_DIR" -maxdepth 1 -name "*_cluster.faa" | wc -l)
+    total_runtime=$((SECONDS / 60))
+
+    # --- Print summary stats ---
+    echo -e "${BOLD}Summary:${NC}"
+    echo -e "Genomes processed : ${CYAN}${total_genomes}${NC}"
+    echo -e "Queries processed : ${CYAN}${total_queries}${NC}"
+    echo -e "Clusters generated: ${CYAN}${total_clusters}${NC}"
+    echo -e "Elapsed time      : ${CYAN}${total_runtime} min${NC}"
+    echo "########################################"
 }
 
 ############################################
@@ -304,6 +372,7 @@ main() {
     local step="$1"
     local dry_run="$2"
     local blast_only="$3"
+    local blast_mode="$4"
 
     check_tools
     get_inputs
@@ -352,5 +421,5 @@ main() {
     echo "Pipeline finished. Results in: $RUN_DIR"
 }
 
-main "$STEP" "$DRY_RUN" "$BLAST_ONLY"
+main "$STEP" "$DRY_RUN" "$BLAST_ONLY" "$BLAST_MODE"
 
