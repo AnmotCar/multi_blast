@@ -191,7 +191,7 @@ run_blast() {
             else
                 $BLAST_MODE -query "$query_file" -db "$db_path" \
                             -out "$out_file" -outfmt '6 sseqid evalue' \
-                            -max_target_seqs 1 -max_hsps 1 -num_threads 4 -evalue 1e-10
+                            -num_threads 4 -evalue 1e-10
 
                 echo "$BLAST_MODE $query_base vs $db_name done."
                 log_status "$query_base" "$db_name" "blast" "done"
